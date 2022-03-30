@@ -1,0 +1,10 @@
+[Unit]
+Description=Valentine Job Manager
+
+[Service]
+NoNewPrivileges=yes
+Type=simple
+ExecStart=/%h/bin/valentine-job-manager
+
+[Install]
+WantedBy=default.target
