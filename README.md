@@ -1,6 +1,8 @@
 ## Valentine Job Manager
 An edit-it-yourself cron alternative that makes it easy to reschedule jobs and save their output.
 
+Instead of using the terse, inscrutable language you don't know (cron DSL), use the terse, inscrutable language you do (C).
+
 ## Overview
 The "jobs" it manages are really just C functions. The manager calls your job functions,
 they do whatever you want, your function tells the manager when it wants to run again, then the manager goes to sleep until the next job is scheduled.
