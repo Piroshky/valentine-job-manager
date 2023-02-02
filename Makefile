@@ -1,9 +1,13 @@
+
 USER=$(shell whoami)
 
 DEFINES=-DUSER=\"$(USER)\"
 
 all: main.c
 	gcc `pkg-config --cflags --libs libnotify` $(DEFINES) main.c -o valentine-job-manager
+
+vjm-status: status.c
+	gcc $(DEFINES) status.c -o vjm-status
 
 # install directive for systemd
 install: all
