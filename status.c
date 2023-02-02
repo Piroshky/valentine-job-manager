@@ -57,6 +57,8 @@ int main (void) {
     if (l > longest_job_name) { longest_job_name = l; }    
   }
 
+  printf("       %-*sNext Run\n", longest_job_name+3, "Job");
+  
   // get the path of the most recent status file
   char *file_status_dir = malloc(sizeof(char) * (strlen(vjm_path) + longest_job_name + 10));
 
@@ -77,6 +79,7 @@ int main (void) {
 
     bool exit_code_p = false;
     int exit_code;
+    char next_run[100];
     fp = fopen(pathname, "r");
     if (fp == NULL) {
       fprintf(stderr, "Couldn't open file\n");
@@ -93,7 +96,17 @@ int main (void) {
 	  ++ix;
 	  while ( *(line + ix) == ' ') {++ix;}
 	  sscanf(line+ix, "%d", &exit_code);
-	  break;
+	} else if (prefix(line, "Next Run:")) {
+	  int ix = 0;
+	  while ( *(line + ix) != ':') {++ix;}
+	  ++ix;
+	  while ( *(line + ix) == ' ') {++ix;}
+	  int jx = 0;
+	  while (( *(line + ix) != '\n')) {
+	    next_run[jx++] = *(line + ix++);
+	  }
+	  next_run[jx] = 0;
+
 	}
 	free(line);
 	line = NULL;
@@ -108,7 +121,7 @@ int main (void) {
       pass_fail = "????";
     }
   
-    printf("[%s] %-*s  |\n", pass_fail, longest_job_name, namelist[j]->d_name);
+    printf("[%s] %-*s   %s\n", pass_fail, longest_job_name, namelist[j]->d_name, next_run);
     free(namelist[j]);
    
   }
