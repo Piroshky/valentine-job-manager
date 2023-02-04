@@ -6,9 +6,39 @@
 #include <string.h>
 #include <stdbool.h>
 #include <sys/types.h>
+#include <unistd.h>
 #include <dirent.h>
+#include <termios.h>
+#include <fcntl.h>
+
+#include <ctype.h>
+
+struct termios original_termios;
 
 char *vjm_path = "/home/" USER "/.config/valentine-job-manager/";
+
+int num_jobs;
+struct ui_line *job_lines;
+int selected_line = 0;
+int selected_file = 0;
+int selected_column = 0;
+int longest_job_name = 0;
+
+void restore_termios() {
+  printf("\e[?25h");
+  tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
+}
+
+struct ui_line {
+  char *exit_status;
+  char *job_name;
+  char *next_run;
+  char *status_file_prefix;
+  int  num_status_files;
+  bool status_files[3];
+};
+
+const char *status_files_strings[] = {"stdout_and_stderr", "stdout", "stderr"};
 
 int directories_only(const struct dirent *e) {
   if (e->d_type != DT_DIR) {
@@ -39,30 +69,61 @@ int prefix(char *s1, char *s2) {
   return strncmp(s1, s2, strlen(s2)) == 0;
 }
 
-int main (void) {
+void draw_ui() {
+  // Display the UI
+  printf("        %-*sNext Run                        Status Files\n", longest_job_name+1, "Job"); 
+  for (int i = 0; i < num_jobs; ++i) {
+    printf("[%s] ", job_lines[i].exit_status);
+    if (selected_line == i) { // begin inverse mode
+      printf("\e[7m");
+    }
+    printf(" %-*s", longest_job_name, job_lines[i].job_name);
+    if (selected_line == i) { // end inverse mode
+      printf("\e[27m");
+    }
+    
+    printf(" %s ", job_lines[i].next_run);
+    for (int k = 0; k < 3; ++k) {
+      if (job_lines[i].status_files[k]) {
+	if (selected_line == i && selected_file == k) {
+	  printf("\e[7m");
+	}
+	printf(" %s ", status_files_strings[k]);
+	if (selected_line == i && selected_file == k) {
+	  printf("\e[27m");
+	}
+	printf(" ");
+      }
+    }
 
+    printf("\n");
+  }
+}
+
+int main (void) {
+  
   struct dirent **namelist;
-  int n;
 
   // get the job folders
-  n = scandir(vjm_path, &namelist, directories_only, alphasort);
-  if (n == -1) {
-    perror("scandir");
+  num_jobs = scandir(vjm_path, &namelist, directories_only, alphasort);
+  if (num_jobs == -1) {
+   perror("scandir");
     return -1;
   }
 
-  int longest_job_name = 0;
-  for (int i = 0; i < n; ++i) {
+  job_lines = malloc(sizeof(struct ui_line) * num_jobs);
+  
+  for (int i = 0; i < num_jobs; ++i) {
     int l = strlen(namelist[i]->d_name);
     if (l > longest_job_name) { longest_job_name = l; }    
   }
+  longest_job_name += 1;
 
-  printf("       %-*sNext Run\n", longest_job_name+3, "Job");
-  
-  // get the path of the most recent status file
+  // Populate the ui_lines
   char *file_status_dir = malloc(sizeof(char) * (strlen(vjm_path) + longest_job_name + 10));
-
-  for (int j = 0; j < n; ++j) {
+  for (int j = 0; j < num_jobs; ++j) {
+    job_lines[j].num_status_files = 0;
+    // get the path of the most recent status file
     sprintf(file_status_dir, "%s%s/status/", vjm_path, namelist[j]->d_name);
     struct dirent **file_statuses;
     int m;
@@ -79,7 +140,7 @@ int main (void) {
 
     bool exit_code_p = false;
     int exit_code;
-    char next_run[100];
+    char *next_run = malloc(sizeof(char) * 100); //todo
     fp = fopen(pathname, "r");
     if (fp == NULL) {
       fprintf(stderr, "Couldn't open file\n");
@@ -117,15 +178,187 @@ int main (void) {
     char *pass_fail;
     if (exit_code_p) {
       pass_fail = (exit_code == 0) ? "PASS" : "FAIL";
+      job_lines[j].exit_status = (exit_code == 0) ? "PASS" : "FAIL";
     } else {
+      job_lines[j].exit_status = "????";
       pass_fail = "????";
     }
-  
-    printf("[%s] %-*s   %s\n", pass_fail, longest_job_name, namelist[j]->d_name, next_run);
+
+    char *job_name = malloc(sizeof(char) * (strlen(namelist[j]->d_name) + 1));
+    strcpy(job_name, namelist[j]->d_name);
+    job_lines[j].job_name = job_name;
+    job_lines[j].next_run = next_run;
+
+    int pl = strlen(pathname) - 11;
+    char modified_path[1024];
+    strncpy((char *)&modified_path, pathname, pl);
+
+    job_lines[j].status_file_prefix = malloc(sizeof(char) * (pl + 1));
+    strncpy(job_lines[j].status_file_prefix, pathname, pl);
+    job_lines[j].status_file_prefix[pl] = 0;
+    
+    // stdout_and_err
+    modified_path[pl] = 0;
+    strcpy(&(modified_path[pl]), "_stdout_and_stderr.txt");
+    if (access(modified_path, F_OK) == 0) {
+      job_lines[j].status_files[0] = true;
+      job_lines[j].num_status_files += 1;
+    } else {
+      job_lines[j].status_files[0] = false;
+    }
+    
+    strcpy(&(modified_path[pl]), "_stdout.txt");
+    if (access(modified_path, F_OK) == 0) {
+      job_lines[j].status_files[1] = true;
+      job_lines[j].num_status_files += 1;
+    } else {
+      job_lines[j].status_files[1] = false;
+    }
+    
+    strcpy(&(modified_path[pl]), "_stderr.txt");
+    if (access(modified_path, F_OK) == 0) {
+      job_lines[j].status_files[2] = true;
+      job_lines[j].num_status_files += 1;
+    } else {
+      job_lines[j].status_files[2] = false;
+    }
+
     free(namelist[j]);
    
   }
   free(namelist);
 
+
+  // Save termios, restore on exit
+  tcgetattr(STDIN_FILENO, &original_termios);
+  atexit(restore_termios);
+  
+  struct termios program_termios = original_termios;
+  // Turn off ctrl-s / ctrl-q
+  program_termios.c_iflag &= ~(IXON);
+  // Enable raw mode, disable canonical mode, disable ctrl-z/c
+  // I will manually re-enable ctrl-c, but suspending the program seems to cause termios to reset
+  // when it's restored to the foreground, and there's no reason to suspend this program anyways.
+  program_termios.c_lflag &= ~(ECHO | ICANON | ISIG);
+  
+  program_termios.c_cc[VMIN]  = 0;
+  //program_termios.c_cc[VTIME] = -1;
+  
+  tcsetattr(STDIN_FILENO, TCSAFLUSH, &program_termios);
+
+  printf("\e[?25l"); //hide cursor
+  
+  draw_ui();  
+
+  bool update_ui = false;
+  bool line_change = false;
+  int  file_change = 0;
+  while (1) {
+    char c = 0;
+    read(STDIN_FILENO, &c, 1);
+    
+    if (c == '\e') {
+      read(STDIN_FILENO, &c, 1);
+      if (c == '[') {
+	read(STDIN_FILENO, &c, 1);
+	switch(c) {
+	case 'A': { // up
+	  update_ui = true;
+	  line_change = true;
+	  selected_line = (num_jobs + selected_line-1) % num_jobs;
+	  break; 
+	}
+	case 'B': { // down
+	  update_ui = true;
+	  line_change = true;
+	  selected_line = (selected_line+1) % num_jobs;
+	  break; 
+	}
+	case 'C': { // right
+	  if (job_lines[selected_line].num_status_files <= 1) {
+	    break;
+	  }	  
+	  update_ui = true;
+	  file_change = 1;
+	  break; 
+	} 
+	case 'D': { // left
+	  if (job_lines[selected_line].num_status_files <= 1) {
+	    break;
+	  }
+	  update_ui = true;
+	  file_change = -1;
+	  break;
+	}
+	}
+      }
+    }
+    
+    if (c == 'q' || c == 3) {
+      break;
+    }
+
+    if (c == 10) {
+      int pid = fork(); 
+      if (pid == 0) {
+	int fd = open("/dev/null",O_WRONLY | O_CREAT, 0666);
+        dup2(fd, 1);
+	dup2(fd, 2);
+	char file_path[1024];
+	sprintf(file_path, "%s_%s.txt", job_lines[selected_line].status_file_prefix, status_files_strings[selected_file]);
+	execl("/usr/bin/xdg-open", "xdg-open", file_path, (char *)0);
+	exit(1);
+      }
+    }
+    
+
+    if (update_ui) {
+      
+      if (line_change && job_lines[selected_line].num_status_files > 0) { // this isn't guaranteed to do the right thing visualy
+	line_change = false;
+
+	int n_cols = job_lines[selected_line].num_status_files;
+	if (selected_column > n_cols-1) {
+	  selected_column = n_cols-1;
+	}
+	int col = -1;
+	for (int i = 0; i < 3; ++i) {
+	  if (job_lines[selected_line].status_files[i]) {
+	    col += 1;
+	  }
+	  if (col == selected_column) {
+	    selected_file = i;
+	    break;
+	  }
+	}
+	      
+      } else if (file_change != 0) {
+
+	int n_cols = job_lines[selected_line].num_status_files;
+
+	selected_column = (n_cols + selected_column + file_change) % n_cols;
+
+	for (int i = 0; i < 3; ++i) {
+	  selected_file = (3 + selected_file + file_change) % 3;
+	  if (job_lines[selected_line].status_files[selected_file]) {
+	    break;
+	  }
+	}
+	
+	file_change = 0;
+      }
+
+      // erase screen
+
+      for (int i = 0; i < num_jobs; ++i) {
+	printf("\e[2K\e[1A");
+      }
+      printf("\e[2K\e[1A");
+      
+      draw_ui();
+      update_ui = false;
+    }
+    
+  }
   return 0;
 }
