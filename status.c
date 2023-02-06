@@ -19,7 +19,9 @@ char *vjm_path = "/home/" USER "/.config/valentine-job-manager/";
 
 int num_jobs;
 struct ui_line *job_lines = NULL;
+bool display_all = true;
 int displayed_lines = 0;
+int displayed_jobs = 0;
 int selected_line = 0;
 int selected_file = 0;
 int selected_column = 0;
@@ -40,17 +42,20 @@ void print_help() {
 	 "State:\n"
 	 "  vjm_path: %s\n\n"
 	 "Controls:\n"
-	 "  toggle help          h\n"
-	 "  move cursor          arrow keys\n"
-	 "  open status file     enter\n"
-	 "  reload job statuses  r\n"
-,
+	 "  toggle help            h\n"
+	 "  move cursor            arrow keys\n"
+	 "  open status file       enter\n"
+	 "  reload job statuses    r\n"
+	 "  filter by exit status  f fail\n"
+	 "                         p pass\n"
+	 "                         ? unknown\n"
+	 "                         a all\n",
 	 vjm_path);
   for (int i = 0; i < plen; ++ i) {
     printf("=");
   }
   printf("\n");
-  displayed_lines += 10;
+  displayed_lines += 14;
 }
 
 void restore_termios() {
@@ -58,8 +63,15 @@ void restore_termios() {
   tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
 }
 
+enum exit_status {
+  PASS, FAIL, UNKNOWN
+};
+const char *exit_status_strings[] = {"PASS", "FAIL", "????"};
+
+enum exit_status display_only = FAIL;
+
 struct ui_line {
-  char *exit_status;
+  enum exit_status exit_status;
   char *job_name;
   char *next_run;
   char *status_file_prefix;
@@ -98,20 +110,45 @@ int prefix(char *s1, char *s2) {
   return strncmp(s1, s2, strlen(s2)) == 0;
 }
 
-// really C?
 int max(int a, int b) {
   return (a > b) ? a : b;
+}
+int min(int a, int b) {
+  return (a < b) ? a : b;
 }
 
 void draw_ui() {
   // Display the UI
   char pass_count_string[256];
-  sprintf(pass_count_string, "%d/%d", num_pass, num_jobs);
+  if (display_all) {
+    sprintf(pass_count_string, "%d/%d", num_pass, num_jobs);
+  } else {
+    sprintf(pass_count_string, "%s", exit_status_strings[display_only]);
+  }
   int first_column_width = max(4, strlen(pass_count_string));
   printf("%-*s  %-*sNext Run                        Status Files\n", first_column_width, pass_count_string, longest_job_name+1, "Job");
-  displayed_lines += 1;
+  displayed_lines += 2;
+
+  if (display_all) {
+    displayed_jobs = num_jobs;
+  } else {
+    displayed_jobs = 0;
+    for (int i = 0; i < num_jobs; ++i) {
+      if (display_only == job_lines[i].exit_status) {
+	displayed_jobs += 1;
+      }
+    }
+    if (selected_line > displayed_jobs) {
+      selected_line = max(0, displayed_jobs - 1);
+    }
+  }
+ 
   for (int i = 0; i < num_jobs; ++i) {
-    printf("%*s ", first_column_width, job_lines[i].exit_status);
+    if (!display_all && display_only != job_lines[i].exit_status) {
+      continue;
+    }
+    
+    printf("%*s ", first_column_width, exit_status_strings[job_lines[i].exit_status]);
     if (selected_line == i) { // begin inverse mode
       printf("\e[7m");
     }
@@ -135,8 +172,9 @@ void draw_ui() {
     }
     if (i != num_jobs - 1) {
       printf("\n");
+      displayed_lines += 1;
     }
-    displayed_lines += 1;
+
   }
   fflush(stdout);
 }
@@ -220,16 +258,13 @@ void load_job_statuses() {
       }
     }
 
-    char *pass_fail;
     if (exit_code_p) {
       if (exit_code == 0) {
 	num_pass += 1;
       }
-      pass_fail = (exit_code == 0) ? "PASS" : "FAIL";
-      job_lines[j].exit_status = (exit_code == 0) ? "PASS" : "FAIL";
+      job_lines[j].exit_status = (exit_code == 0) ? PASS : FAIL;
     } else {
-      job_lines[j].exit_status = "????";
-      pass_fail = "????";
+      job_lines[j].exit_status = UNKNOWN;
     }
 
     char *job_name = malloc(sizeof(char) * (strlen(namelist[j]->d_name) + 1));
@@ -318,13 +353,17 @@ int main (void) {
 	case 'A': { // up
 	  update_ui = true;
 	  line_change = true;
-	  selected_line = (num_jobs + selected_line-1) % num_jobs;
+	  if (displayed_jobs > 0) {
+	    selected_line = (num_jobs + selected_line-1) % displayed_jobs;
+	  }
 	  break; 
 	}
 	case 'B': { // down
 	  update_ui = true;
 	  line_change = true;
-	  selected_line = (selected_line+1) % num_jobs;
+	  if (displayed_jobs > 0) {
+	    selected_line = (selected_line+1) % displayed_jobs;
+	  }
 	  break; 
 	}
 	case 'C': { // right
@@ -349,6 +388,21 @@ int main (void) {
       break;
     } else if (c == 'h') {
       show_help = !show_help;
+      update_ui = true;
+    } else if (c == 'p') {
+      display_all = false;
+      display_only = PASS;
+      update_ui = true;
+    } else if (c == 'f') {
+      display_all = false;
+      display_only = FAIL;
+      update_ui = true;
+    } else if (c == '?') {
+      display_all = false;
+      display_only = UNKNOWN;
+      update_ui = true;      
+    } else if (c == 'a') {
+      display_all = true;
       update_ui = true;
     } else if (c == 'r') {
       load_job_statuses();
