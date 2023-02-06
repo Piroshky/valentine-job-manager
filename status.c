@@ -18,14 +18,43 @@ struct termios original_termios;
 char *vjm_path = "/home/" USER "/.config/valentine-job-manager/";
 
 int num_jobs;
-struct ui_line *job_lines;
+struct ui_line *job_lines = NULL;
+int displayed_lines = 0;
 int selected_line = 0;
 int selected_file = 0;
 int selected_column = 0;
 int longest_job_name = 0;
+int num_pass = 0;
+
+void print_help() {
+  int plen = strlen(vjm_path) + 12;
+  plen += (plen % 2) ? 1 : 0;
+  for (int i = 0; i < (plen-6)/2; ++ i) {
+    printf("=");
+  }
+  printf(" HELP ");
+  for (int i = 0; i < (plen-6)/2; ++ i) {
+    printf("=");
+  }  
+  printf("\n"
+	 "State:\n"
+	 "  vjm_path: %s\n\n"
+	 "Controls:\n"
+	 "  toggle help          h\n"
+	 "  move cursor          arrow keys\n"
+	 "  open status file     enter\n"
+	 "  reload job statuses  r\n"
+,
+	 vjm_path);
+  for (int i = 0; i < plen; ++ i) {
+    printf("=");
+  }
+  printf("\n");
+  displayed_lines += 10;
+}
 
 void restore_termios() {
-  printf("\e[?25h");
+  printf("\e[?25h"); // show cursor
   tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
 }
 
@@ -69,11 +98,20 @@ int prefix(char *s1, char *s2) {
   return strncmp(s1, s2, strlen(s2)) == 0;
 }
 
+// really C?
+int max(int a, int b) {
+  return (a > b) ? a : b;
+}
+
 void draw_ui() {
   // Display the UI
-  printf("        %-*sNext Run                        Status Files\n", longest_job_name+1, "Job"); 
+  char pass_count_string[256];
+  sprintf(pass_count_string, "%d/%d", num_pass, num_jobs);
+  int first_column_width = max(4, strlen(pass_count_string));
+  printf("%-*s  %-*sNext Run                        Status Files\n", first_column_width, pass_count_string, longest_job_name+1, "Job");
+  displayed_lines += 1;
   for (int i = 0; i < num_jobs; ++i) {
-    printf("[%s] ", job_lines[i].exit_status);
+    printf("%*s ", first_column_width, job_lines[i].exit_status);
     if (selected_line == i) { // begin inverse mode
       printf("\e[7m");
     }
@@ -95,22 +133,29 @@ void draw_ui() {
 	printf(" ");
       }
     }
-
-    printf("\n");
+    if (i != num_jobs - 1) {
+      printf("\n");
+    }
+    displayed_lines += 1;
   }
+  fflush(stdout);
 }
 
-int main (void) {
-  
+void load_job_statuses() {
+  longest_job_name = 0;
+  num_pass = 0;
   struct dirent **namelist;
 
   // get the job folders
   num_jobs = scandir(vjm_path, &namelist, directories_only, alphasort);
   if (num_jobs == -1) {
-   perror("scandir");
-    return -1;
+    perror("scandir");
+    exit(-1);
   }
 
+  if (job_lines != NULL) {
+    free(job_lines);
+  }
   job_lines = malloc(sizeof(struct ui_line) * num_jobs);
   
   for (int i = 0; i < num_jobs; ++i) {
@@ -177,6 +222,9 @@ int main (void) {
 
     char *pass_fail;
     if (exit_code_p) {
+      if (exit_code == 0) {
+	num_pass += 1;
+      }
       pass_fail = (exit_code == 0) ? "PASS" : "FAIL";
       job_lines[j].exit_status = (exit_code == 0) ? "PASS" : "FAIL";
     } else {
@@ -226,8 +274,12 @@ int main (void) {
     free(namelist[j]);
    
   }
-  free(namelist);
+  free(namelist);  
+}
 
+int main (void) {
+
+  load_job_statuses();
 
   // Save termios, restore on exit
   tcgetattr(STDIN_FILENO, &original_termios);
@@ -248,9 +300,10 @@ int main (void) {
 
   printf("\e[?25l"); //hide cursor
   
-  draw_ui();  
+  draw_ui();
 
   bool update_ui = false;
+  bool show_help = false;
   bool line_change = false;
   int  file_change = 0;
   while (1) {
@@ -292,14 +345,16 @@ int main (void) {
 	}
 	}
       }
-    }
-    
-    if (c == 'q' || c == 3) {
+    } else if (c == 'q' || c == 3) {
       break;
-    }
-
-    if (c == 10) {
-      int pid = fork(); 
+    } else if (c == 'h') {
+      show_help = !show_help;
+      update_ui = true;
+    } else if (c == 'r') {
+      load_job_statuses();
+      update_ui = true;
+    } else if (c == 10) {
+      int pid = fork();
       if (pid == 0) {
 	int fd = open("/dev/null",O_WRONLY | O_CREAT, 0666);
         dup2(fd, 1);
@@ -349,11 +404,18 @@ int main (void) {
       }
 
       // erase screen
-
-      for (int i = 0; i < num_jobs; ++i) {
-	printf("\e[2K\e[1A");
+     
+      printf("\r");
+      for (int i = 0; i < displayed_lines; ++i) {
+	printf("\e[2K\e[1A"); // erase entire line, move up
       }
-      printf("\e[2K\e[1A");
+      printf("\e[1B");
+     
+      displayed_lines = 0;
+
+      if (show_help) {
+	print_help();
+      }
       
       draw_ui();
       update_ui = false;
