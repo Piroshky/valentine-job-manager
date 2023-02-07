@@ -3,6 +3,8 @@ An edit-it-yourself cron alternative that makes it easy to reschedule jobs and s
 
 Instead of using the terse, inscrutable language you don't know (cron DSL), use the terse, inscrutable language you do (C).
 
+Runs as a daemon, comes with a command line based dashboard.
+
 ## Overview
 The "jobs" it manages are really just C functions. The manager calls your job functions,
 they do whatever you want, your function tells the manager when it wants to run again, then the manager goes to sleep until the next job is scheduled.
@@ -14,6 +16,10 @@ if a job is scheduled to start while another job is running the former will not 
 the latter is finished. I aimed to make the manager as simple as possible so it would be
 easy for others to modify to their needs. The manager has worked well for me, but of
 course I can make no guarantees about its reliability.
+
+## Dashboard
+The dashboard program ```vjm-status``` is a convenient way to see the most recent exit
+status of your jobs, what output they produced, and when they will run next.
 
 ## How it works
 Each job function returns void and takes a pointer to a ```run_info``` struct as an argument. This struct
