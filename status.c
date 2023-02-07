@@ -13,20 +13,42 @@
 
 #include <ctype.h>
 
-struct termios original_termios;
-
 char *vjm_path = "/home/" USER "/.config/valentine-job-manager/";
 
-int num_jobs;
-struct ui_line *job_lines = NULL;
-bool display_all = true;
-int displayed_lines = 0;
-int displayed_jobs = 0;
-int selected_line = 0;
-int selected_file = 0;
-int selected_column = 0;
-int longest_job_name = 0;
+enum exit_status {
+  PASS, FAIL, UNKNOWN
+};
+const char *exit_status_strings[] = {"PASS", "FAIL", "????"};
+
+const char *status_files_strings[] = {"stdout_and_stderr", "stdout", "stderr"};
+
+struct ui_line {
+  enum exit_status exit_status;
+  char *job_name;
+  char *next_run;
+  char *status_file_prefix;
+  int  num_status_files;
+  bool status_files[3];
+};
+
+//// UI State
+struct termios original_termios;
+
+int num_jobs = 0;
+struct ui_line *job_lines = NULL; // array of all the structs containing job information
+
+bool display_all = true; // these variables are used to control job filtering
+enum exit_status display_only = FAIL;
 int num_pass = 0;
+
+int displayed_lines  = 0;
+int displayed_jobs   = 0;
+
+int selected_line    = 0; // cursor information
+int selected_file    = 0;
+int selected_column  = 0;
+
+int longest_job_name = 0;
 
 void print_help() {
   int plen = strlen(vjm_path) + 12;
@@ -62,24 +84,6 @@ void restore_termios() {
   printf("\e[?25h"); // show cursor
   tcsetattr(STDIN_FILENO, TCSAFLUSH, &original_termios);
 }
-
-enum exit_status {
-  PASS, FAIL, UNKNOWN
-};
-const char *exit_status_strings[] = {"PASS", "FAIL", "????"};
-
-enum exit_status display_only = FAIL;
-
-struct ui_line {
-  enum exit_status exit_status;
-  char *job_name;
-  char *next_run;
-  char *status_file_prefix;
-  int  num_status_files;
-  bool status_files[3];
-};
-
-const char *status_files_strings[] = {"stdout_and_stderr", "stdout", "stderr"};
 
 int directories_only(const struct dirent *e) {
   if (e->d_type != DT_DIR) {
@@ -312,8 +316,19 @@ void load_job_statuses() {
   free(namelist);  
 }
 
-int main (void) {
+int main (int argc, char **argv) {
 
+  if (argc > 1) {
+    if (strcmp(argv[1], "-h") == 0 || strcmp(argv[1], "--help") == 0 || strcmp(argv[1], "-help") == 0) {
+      print_help();
+    } else {
+      printf("Unrecognized argument: %s\n", argv[1]);
+      print_help();
+    }
+
+    exit(0);
+  }
+  
   load_job_statuses();
 
   // Save termios, restore on exit
