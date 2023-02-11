@@ -628,6 +628,7 @@ int main() {
       
       timespec_get(&current_time, TIME_UTC);
     }
+    utimensat(0, vjm_path, NULL, 0);
   }
   if (schedule_head == NULL) {
     syslog(LOG_NOTICE, "No jobs scheduled, exiting");

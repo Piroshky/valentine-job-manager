@@ -10,8 +10,14 @@
 #include <dirent.h>
 #include <termios.h>
 #include <fcntl.h>
+#include <sys/inotify.h>
+#include <limits.h>
+#include <poll.h>
 
 #include <ctype.h>
+
+#define BUF_LEN sizeof(struct inotify_event) + NAME_MAX + 1
+
 
 char *vjm_path = "/home/" USER "/.config/valentine-job-manager/";
 
@@ -221,7 +227,7 @@ void load_job_statuses() {
   
     char pathname[1024];
     FILE *fp;
-    sprintf(pathname, "%s%s", file_status_dir,file_statuses[m-1]->d_name);
+    sprintf(pathname, "%s%s", file_status_dir, file_statuses[m-1]->d_name);
     free(file_statuses[m-1]);
     free(file_statuses);
 
@@ -328,6 +334,22 @@ int main (int argc, char **argv) {
 
     exit(0);
   }
+
+  char buf[BUF_LEN];
+  struct pollfd fds[2];
+  nfds_t nfds = 0;
+
+  fds[0].fd = STDIN_FILENO;
+  fds[0].events = POLLIN;
+  nfds += 1;
+  
+  int inotify_fd = inotify_init1(IN_NONBLOCK);
+  if (inotify_fd != -1) {
+    fds[1].fd = inotify_fd;
+    fds[1].events = POLLIN;
+    inotify_add_watch(inotify_fd, "/home/drew/.config/valentine-job-manager/", IN_ATTRIB);
+    nfds += 1;
+  }
   
   load_job_statuses();
 
@@ -356,85 +378,102 @@ int main (int argc, char **argv) {
   bool show_help = false;
   bool line_change = false;
   int  file_change = 0;
+
+  int poll_ret;
   while (1) {
-    char c = 0;
-    read(STDIN_FILENO, &c, 1);
-    
-    if (c == '\e') {
-      read(STDIN_FILENO, &c, 1);
-      if (c == '[') {
-	read(STDIN_FILENO, &c, 1);
-	switch(c) {
-	case 'A': { // up
-	  update_ui = true;
-	  line_change = true;
-	  if (displayed_jobs > 0) {
-	    selected_line = (num_jobs + selected_line-1) % displayed_jobs;
-	  }
-	  break; 
-	}
-	case 'B': { // down
-	  update_ui = true;
-	  line_change = true;
-	  if (displayed_jobs > 0) {
-	    selected_line = (selected_line+1) % displayed_jobs;
-	  }
-	  break; 
-	}
-	case 'C': { // right
-	  if (job_lines[selected_line].num_status_files <= 1) {
-	    break;
-	  }	  
-	  update_ui = true;
-	  file_change = 1;
-	  break; 
-	} 
-	case 'D': { // left
-	  if (job_lines[selected_line].num_status_files <= 1) {
-	    break;
-	  }
-	  update_ui = true;
-	  file_change = -1;
-	  break;
-	}
-	}
-      }
-    } else if (c == 'q' || c == 3) {
-      break;
-    } else if (c == 'h') {
-      show_help = !show_help;
-      update_ui = true;
-    } else if (c == 'p') {
-      display_all = false;
-      display_only = PASS;
-      update_ui = true;
-    } else if (c == 'f') {
-      display_all = false;
-      display_only = FAIL;
-      update_ui = true;
-    } else if (c == '?') {
-      display_all = false;
-      display_only = UNKNOWN;
-      update_ui = true;      
-    } else if (c == 'a') {
-      display_all = true;
-      update_ui = true;
-    } else if (c == 'r') {
-      load_job_statuses();
-      update_ui = true;
-    } else if (c == 10) {
-      int pid = fork();
-      if (pid == 0) {
-	int fd = open("/dev/null",O_WRONLY | O_CREAT, 0666);
-        dup2(fd, 1);
-	dup2(fd, 2);
-	char file_path[1024];
-	sprintf(file_path, "%s_%s.txt", job_lines[selected_line].status_file_prefix, status_files_strings[selected_file]);
-	execl("/usr/bin/xdg-open", "xdg-open", file_path, (char *)0);
-	exit(1);
-      }
+
+    poll_ret = poll(fds, nfds, -1);
+
+    if (poll_ret <= 0) {
+      continue;
     }
     
+    if (fds[0].revents & POLLIN) {
+      char c = 0;
+      read(STDIN_FILENO, &c, 1);
+    
+      if (c == '\e') {
+	read(STDIN_FILENO, &c, 1);
+	if (c == '[') {
+	  read(STDIN_FILENO, &c, 1);
+	  switch(c) {
+	  case 'A': { // up
+	    update_ui = true;
+	    line_change = true;
+	    if (displayed_jobs > 0) {
+	      selected_line = (num_jobs + selected_line-1) % displayed_jobs;
+	    }
+	    break; 
+	  }
+	  case 'B': { // down
+	    update_ui = true;
+	    line_change = true;
+	    if (displayed_jobs > 0) {
+	      selected_line = (selected_line+1) % displayed_jobs;
+	    }
+	    break; 
+	  }
+	  case 'C': { // right
+	    if (job_lines[selected_line].num_status_files <= 1) {
+	      break;
+	    }	  
+	    update_ui = true;
+	    file_change = 1;
+	    break; 
+	  } 
+	  case 'D': { // left
+	    if (job_lines[selected_line].num_status_files <= 1) {
+	      break;
+	    }
+	    update_ui = true;
+	    file_change = -1;
+	    break;
+	  }
+	  }
+	}
+      } else if (c == 'q' || c == 3) {
+	break;
+      } else if (c == 'h') {
+	show_help = !show_help;
+	update_ui = true;
+      } else if (c == 'p') {
+	display_all = false;
+	display_only = PASS;
+	update_ui = true;
+      } else if (c == 'f') {
+	display_all = false;
+	display_only = FAIL;
+	update_ui = true;
+      } else if (c == '?') {
+	display_all = false;
+	display_only = UNKNOWN;
+	update_ui = true;      
+      } else if (c == 'a') {
+	display_all = true;
+	update_ui = true;
+      } else if (c == 'r') {
+	load_job_statuses();
+	update_ui = true;
+      } else if (c == 10) {
+	int pid = fork();
+	if (pid == 0) {
+	  int fd = open("/dev/null",O_WRONLY | O_CREAT, 0666);
+	  dup2(fd, 1);
+	  dup2(fd, 2);
+	  char file_path[1024];
+	  sprintf(file_path, "%s_%s.txt", job_lines[selected_line].status_file_prefix, status_files_strings[selected_file]);
+	  execl("/usr/bin/xdg-open", "xdg-open", file_path, (char *)0);
+	  exit(1);
+	}
+      }
+    }
+
+    
+    if (nfds == 2 && (fds[1].revents & POLLIN)) {
+      read(inotify_fd, buf, sizeof buf); // might not be necessary, but probably clears the fd
+      load_job_statuses();
+      update_ui = true;
+    }
 
     if (update_ui) {
       
@@ -472,8 +511,7 @@ int main (int argc, char **argv) {
 	file_change = 0;
       }
 
-      // erase screen
-     
+      // erase screen     
       printf("\r");
       for (int i = 0; i < displayed_lines; ++i) {
 	printf("\e[2K\e[1A"); // erase entire line, move up
