@@ -73,7 +73,7 @@ void print_help() {
 	 "  toggle help            h\n"
 	 "  move cursor            arrow keys\n"
 	 "  open status file       enter\n"
-	 "  reload job statuses    r\n"
+	 "  reload job statuses    r (the program will refresh automatically when a job completes)\n"
 	 "  filter by exit status  f fail\n"
 	 "                         p pass\n"
 	 "                         ? unknown\n"
