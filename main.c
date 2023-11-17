@@ -247,21 +247,22 @@ void run_daily(struct run_info *info, int hour, int minute, int second) {
   _run_daily(info->start_time, info->next_run, hour, minute, second);
 }
 
-void _run_in(const struct timespec *base_time, struct timespec *run_next, int hour, int minute, int second) {  
-  struct tm modified_tm_time = *localtime(&base_time->tv_sec);
+// Sets info's run_next to timestamp in +hour:minute:second from calling the function
+void run_in(struct run_info *info, int hour, int minute, int second) {
+  struct timespec current_time;
+  timespec_get(&current_time, TIME_UTC);
+  
+  struct tm modified_tm_time = *localtime(&(current_time.tv_sec));
   modified_tm_time.tm_hour += hour;
   modified_tm_time.tm_min  += minute;
   modified_tm_time.tm_sec  += second;
 
-  time_t next = run_next->tv_sec = timelocal(&modified_tm_time);
+  struct timespec *next_run = info->next_run;
+  time_t next = next_run->tv_sec = timelocal(&modified_tm_time);
 
-  if(run_next->tv_sec == 0 || next < run_next->tv_sec) {
-    run_next->tv_sec = next;
+  if(next_run->tv_sec == 0 || next < next_run->tv_sec) {
+    next_run->tv_sec = next;
   }  
-}
-
-void run_in(struct run_info *info, int hour, int minute, int second) {
-  _run_in(info->start_time, info->next_run, hour, minute, second);
 }
 
 #define SUNDAY     1
