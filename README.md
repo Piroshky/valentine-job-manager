@@ -21,6 +21,8 @@ course I can make no guarantees about its reliability.
 The dashboard program ```vjm-status``` is a convenient way to see the most recent exit
 status of your jobs, what output they produced, and when they will run next.
 
+It looks for a config file at: ```~/.config/vjm-status/config```. Look at ```example-config``` for an example config file.
+
 ## How it works
 Each job function returns void and takes a pointer to a ```run_info``` struct as an argument. This struct
 contains the time the job was scheduled to run, what time it is actually being ran, and a

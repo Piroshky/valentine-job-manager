@@ -1,0 +1,6 @@
+### Jobs shown when vjm-status first opens
+### options: all (default), fail, pass, unknown
+# default_status_filter fail
+
+### Print job status line according to exit code
+# show_status_color true
