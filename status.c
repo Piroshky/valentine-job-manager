@@ -16,8 +16,9 @@
 
 #include <ctype.h>
 
-#define BUF_LEN sizeof(struct inotify_event) + NAME_MAX + 1
+#include "config.h"
 
+#define BUF_LEN sizeof(struct inotify_event) + NAME_MAX + 1
 
 char *vjm_path = "/home/" USER "/.config/valentine-job-manager/";
 
@@ -43,6 +44,7 @@ struct termios original_termios;
 int num_jobs = 0;
 struct ui_line *job_lines = NULL; // array of all the structs containing job information
 
+bool show_status_color = false;
 bool display_all = true; // these variables are used to control job filtering
 enum exit_status display_only = FAIL;
 int num_pass = 0;
@@ -55,6 +57,7 @@ int selected_file    = 0;
 int selected_column  = 0;
 
 int longest_job_name = 0;
+
 
 void print_help() {
   int plen = strlen(vjm_path) + 12;
@@ -69,6 +72,8 @@ void print_help() {
   printf("\n"
 	 "State:\n"
 	 "  vjm_path: %s\n\n"
+	 "Config Location:\n"
+	 "  ~/.config/vjm-status/config\n\n"
 	 "Controls:\n"
 	 "  toggle help            h\n"
 	 "  move cursor            arrow keys\n"
@@ -152,39 +157,57 @@ void draw_ui() {
       selected_line = max(0, displayed_jobs - 1);
     }
   }
- 
+  
+  int display_count = 0;
   for (int i = 0; i < num_jobs; ++i) {
     if (!display_all && display_only != job_lines[i].exit_status) {
       continue;
     }
-    
+
+    if (show_status_color) {
+      switch (job_lines[i].exit_status) {
+      case PASS:
+	printf("\e[32m");
+	break;
+	
+      case FAIL:
+	printf("\e[31m");
+	break;	
+      }
+    }
     printf("%*s ", first_column_width, exit_status_strings[job_lines[i].exit_status]);
-    if (selected_line == i) { // begin inverse mode
+    
+    if (selected_line == display_count) { // begin inverse mode
       printf("\e[7m");
     }
     printf(" %-*s", longest_job_name, job_lines[i].job_name);
-    if (selected_line == i) { // end inverse mode
+    if (selected_line == display_count) { // end inverse mode
       printf("\e[27m");
     }
     
     printf(" %s ", job_lines[i].next_run);
     for (int k = 0; k < 3; ++k) {
       if (job_lines[i].status_files[k]) {
-	if (selected_line == i && selected_file == k) {
+	if (selected_line == display_count && selected_file == k) {
 	  printf("\e[7m");
 	}
 	printf(" %s ", status_files_strings[k]);
-	if (selected_line == i && selected_file == k) {
+	if (selected_line == display_count && selected_file == k) {
 	  printf("\e[27m");
 	}
 	printf(" ");
       }
     }
+    
+    if (show_status_color) {
+      printf("\e[0m");
+    }
+
     if (i != num_jobs - 1) {
       printf("\n");
       displayed_lines += 1;
-    }
-
+    }    
+    display_count += 1;
   }
   fflush(stdout);
 }
@@ -322,6 +345,100 @@ void load_job_statuses() {
   free(namelist);  
 }
 
+config_param vjm_status_params[] = {
+  {"default_status_filter", STRING, "all", false},
+  {"show_status_color", BOOL, "false", false}
+};
+
+config vjm_status_conf = {
+  sizeof(vjm_status_params) / sizeof(config_param),
+  vjm_status_params
+};
+
+bool eval_config(config *conf) {
+  for (int i = 0; i < conf->num_params; ++i) {
+    config_param *p = &(conf->parameters[i]);
+
+    if (strcmp(p->name, "default_status_filter") == 0) {
+      
+      if (strcmp(p->value, "all") == 0) {
+	display_all = true;
+      } else if (strcmp(p->value, "fail") == 0) {
+	display_all = false;
+	display_only = FAIL;
+      } else if (strcmp(p->value, "pass") == 0) {
+	display_all = false;
+	display_only = PASS;
+      } else if (strcmp(p->value, "unknown") == 0) {
+	display_all = false;
+	display_only = UNKNOWN;
+      } else {
+	fprintf(stderr, "unrecognized value %s, for parameter %s\n", p->value, p->name);
+	return false;
+      }
+      
+    } else if (strcmp(p->name, "show_status_color") == 0) {
+
+      if (strcmp(p->value, "true") == 0) {
+	show_status_color = true;
+      } else if (strcmp(p->value, "false") == 0) {
+	show_status_color = false;
+      } else {
+	fprintf(stderr, "unrecognized value %s, for parameter %s\n", p->value, p->name);
+	return false;
+      }
+      
+    } else {
+      fprintf(stderr, "Unhandled parameter %s\n", p->name);
+      return false;
+    }
+  }
+  
+  return true;
+}
+
+bool load_config() {
+  const char *homedir;
+  if ((homedir = getenv("HOME")) == NULL) {
+    homedir = getpwuid(getuid())->pw_dir;
+  }
+
+  char *vjm_status_config_subpath = "/.config/vjm-status/config";
+  int full_path_len = strlen(homedir) + strlen(vjm_status_config_subpath) + 1;
+  char *config_full_path = malloc(sizeof(char) * full_path_len);  
+  if (config_full_path == NULL) {
+    fprintf(stderr, "malloc failed\n");
+    return false;
+  }
+  int ret = snprintf(config_full_path, full_path_len, "%s%s", homedir, vjm_status_config_subpath);
+  if (ret != full_path_len - 1) {
+    fprintf(stderr, "snprintf failed: %d\n", ret);
+    return false;
+  }
+  
+  FILE *fp = fopen(config_full_path, "r");
+  if (fp == NULL) {
+    // no config file
+    return true;
+  }
+
+  int line_num = 1;
+  char config_line[CONFIG_LINE_SIZE];
+  while(fgets((char *) &config_line, CONFIG_LINE_SIZE, fp)) {
+    char *err_msg = read_config_line(config_line, &vjm_status_conf);
+    if (err_msg != NULL) {
+      fprintf(stderr, "~/.config/vjm-status/config:%d:0: %s\n", line_num, err_msg);
+      fprintf(stderr, "line:%s\n", config_line);
+      return false;
+    }
+    line_num += 1;
+  }
+  /* printf("Read config file\n"); */
+  /* print_config(&vjm_status_conf); */
+  
+  return true;
+}
+
 int main (int argc, char **argv) {
 
   if (argc > 1) {
@@ -335,6 +452,11 @@ int main (int argc, char **argv) {
     exit(0);
   }
 
+  // load config
+  load_config();
+  eval_config(&vjm_status_conf);
+  
+  // setup directory monitoring for auto-reload
   char buf[BUF_LEN];
   struct pollfd fds[2];
   nfds_t nfds = 0;
